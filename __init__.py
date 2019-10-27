@@ -3,7 +3,43 @@ from __future__ import division, print_function, absolute_import
 import numpy as np
 from scipy.optimize import minimize
 from tqdm import tqdm
-from matplotlib import pyplot  as plt
+from matplotlib import pyplot as plt
+import inspect
+import sys
+
+
+# save myself time and effort by standardizing the descriptions of variables
+# in the function docstrings
+__std_lbls = {
+    "x": "x-values of data",
+    "y": "y-values of data",
+    "x0" : """reference x value in the gap line equation
+           (x - x0)*m + y0""",
+    "y0" : """y value of the gap line at x0 in 
+           (x - x0)*m + y0""",
+    "m" : """slope of the gap in the equation 
+          (x - x0)*m + y0
+          i.e., dy/dx""",
+    "sig" : """kernel width for use in KDE
+            If rescale is False, then this is in units of y. A value of 0.15 
+            usually yields good results.
+            If rescale is True, then this is in units of the sample standard
+            deviation of y.
+            E.g., if the sample standard deviation of the y data after 
+            aligning the data to the gap is 2., sig is 0.1, and rescale is  
+            True then the kernel width for the KDE will be 0.2.""",
+    "rescale" : """True or False
+                Whether to rescale the data by their sample standard 
+                deviation after aligning to the gap, before computing the 
+                KDE at the line center.""",
+    "y0_guess" : "Guess at y0 of gap line to start search.",
+    "m_guess" : "Guess at slope of gap line to start search.",
+    "y0_rng" : """The maximum by which the gap lines are allowed to deviate  \
+               from y0 when searching for the best fit.""",
+    "min_kws" : """Dictioary of keywords to be passed to scipy.optimize.minimize 
+                when 
+                numerically searching for a fit. Can be used, e.g., 
+                to change the minimization method used."""}
 
 
 def gap_line(x, x0, y0, m):
@@ -14,6 +50,7 @@ def gap_line(x, x0, y0, m):
     y = (x - x0) * m + y0
     """
     return (x - x0) * m + y0
+
 
 
 def kde(xx, x, xsig):
@@ -44,6 +81,7 @@ def kde(xx, x, xsig):
     exponents = -(x[:,None] - xx[None,:]) ** 2 * expfacs[:,None]
     terms = normfacs[:,None] * np.exp(exponents)
     return np.sum(terms, 0)
+kde.__doc__.format(**__std_lbls)
 
 
 def density_in_gap(x, y, x0, y0, m, sig, rescale=True):
@@ -79,6 +117,7 @@ def density_in_gap(x, y, x0, y0, m, sig, rescale=True):
     # compute the denisyt of points at the gap (at 0 in the aligned Y
     # coordinates)
     return kde(0, Y, sig)
+density_in_gap.__doc__.format(**__std_lbls)
 
 
 def bootstrap_fit_gap(x, y, x0, y0_guess, m_guess, sig, y0_rng=0.2,
@@ -113,14 +152,16 @@ def bootstrap_fit_gap(x, y, x0, y0_guess, m_guess, sig, y0_rng=0.2,
     npts = len(x)
     iall = np.arange(npts) # indices of all points
     boots = []
+    print("Bootstrapping...")
     for _ in tqdm(range(nboots)):
         # detrmine which points will be bootstrapped
         ichoice = np.random.choice(iall, npts, replace=True)
-
+        xx, yy = x[ichoice], y[ichoice]
         try:
             # now try to fit those points
-            fit = fit_gap(x, y, x0, y0_guess, m_guess, sig, y0_rng,
+            fit = fit_gap(xx, yy, x0, y0_guess, m_guess, sig, y0_rng,
                           min_kws=min_kws)
+            boots.append(fit)
 
         # if it doesn't work and the user wants them to work, raise the error
         except AssertionError:
@@ -136,6 +177,7 @@ def bootstrap_fit_gap(x, y, x0, y0_guess, m_guess, sig, y0_rng=0.2,
                              "".format(tol*100))
 
     return boots
+bootstrap_fit_gap.__doc__.format(**__std_lbls)
 
 
 def fit_gap(x, y, x0, y0_guess, m_guess, sig, y0_rng, min_kws=None):
@@ -159,6 +201,9 @@ def fit_gap(x, y, x0, y0_guess, m_guess, sig, y0_rng, min_kws=None):
 
     if min_kws is None:
         min_kws = {}
+    # for some reason most minimizing methods don't converge, but Nelder-Mead
+    # does
+    min_kws.setdefault("method", 'Nelder-Mead')
 
     # create cost function that is simply the density of points along  the
     # gap line
@@ -178,6 +223,7 @@ def fit_gap(x, y, x0, y0_guess, m_guess, sig, y0_rng, min_kws=None):
 
     # return  the best fit y0, m
     return result.x
+fit_gap.__doc__.format(**__std_lbls)
 
 
 def uncertainty_from_boots(boots):
@@ -206,33 +252,36 @@ def uncertainty_from_boots(boots):
 
 def test():
     # make some fake normally distributed data
-    np.random.seed(0)
-    n = 500
+    np.random.seed(42)
+    n = 600
     x, y = np.random.randn(2, n)
 
     # now define the parameters of a line
     #  y = (x0 - x)*m + y0
     # to describe a fake gap
     x0 = 0
-    m = 0.2
-    y0 = -0.1
+    m = 1
+    y0 = -0.5
 
     # and clear out points within the vicinity fo that gap
     ygap = gap_line(x, x0, y0, m)
     dy = y - ygap
-    remove = np.abs(dy) < 0.05
-    x, y = [np.delete(a, remove) for a in (x, y)]
+    remove = np.abs(dy) < 0.3
+    x, y = [a[~remove] for a in (x, y)]
 
     # now bootstrap fits to the gappy data
-    y0_guess = 0.
-    m_guess = 0.
+    y0_guess = -0.6
+    m_guess = 0.9
     sig = 0.15
-    y0_rng = 0.2
-    boots = bootstrap_fit_gap(x, y, x0, y0_guess, m_guess, sig, y0_rng)
+    y0_rng = 0.5
+    boots = bootstrap_fit_gap(x, y, x0, y0_guess, m_guess, sig, y0_rng,
+                              nboots=300)
 
     # print result
     triplets = uncertainty_from_boots(boots)
     y0trip, mtrip = triplets
+    print("")
+    print("")
     print("Input gap line parameters:")
     print("  y0 = {}".format(y0))
     print("  m = {}".format(m))
@@ -241,52 +290,16 @@ def test():
     print("  m = {:.2f} +{:.2f}/-{:.2f}".format(*mtrip))
 
     # now plot up the results
-    fig, ax = plt.subplots_adjust(1,1)
+    fig, ax = plt.subplots(1,1)
     ax.plot(x, y, 'k.')
-    xlim = ax.get_xlim()
+    xlim = np.array(ax.get_xlim())
     ygap = gap_line(xlim, x0, y0, m)
-    ax.plot(xlim, ygap, colot='C0')
+    ax.plot(xlim, ygap, color='C0')
 
     # ugh, I hate making error regions
     boots = np.asarray(boots)
     y0boot, mboot = boots.T
-    xgrid = np.linspace(xlim, 300)
+    xgrid = np.linspace(*xlim, num=300)
     ygap_grid = gap_line(xgrid[None,:], x0, y0boot[:,None], mboot[:,None])
     ygap_lo, ygap_hi = np.percentile(ygap_grid, (16, 84), axis=0)
-    ax.fill_between(xgrid, ygap_lo, ygap_hi, color='C1', alpha=0.3)
-
-
-
-# save myself time and effort by standardizing the descriptions of variables
-# in the function docstrings
-__std_lbls = {
-    "x": "x-values of data",
-    "y": "y-values of data",
-    "x0" : """reference x value in the gap line equation
-           (x - x0)*m + y0""",
-    "y0" : """y value of the gap line at x0 in 
-           (x - x0)*m + y0""",
-    "m" : """slope of the gap in the equation 
-          (x - x0)*m + y0
-          i.e., dy/dx""",
-    "sig" : """kernel width for use in KDE
-            If rescale is False, then this is in units of y. A value of 0.15 
-            usually yields good results.
-            If rescale is True, then this is in units of the sample standard
-            deviation of y.
-            E.g., if the sample standard deviation of the y data after 
-            aligning the data to the gap is 2., sig is 0.1, and rescale is  
-            True then the kernel width for the KDE will be 0.2.""",
-    "rescale" : """True or False
-                Whether to rescale the data by their sample standard 
-                deviation after aligning to the gap, before computing the 
-                KDE at the line center.""",
-    "y0_rng" : """The maximum by which the gap lines are allowed to deviate  \
-               from y0 when searching for the best fit.""",
-    "min_kws" : """Dictioary of keywords to be passed to scipy.optimize.minimize 
-                when 
-                numerically searching for a fit. Can be used, e.g., 
-                to change the minimization method used."""}
-for item in __dict__.values():
-    if hasattr(item, '__doc__'):
-        item.__doc__.format(**__std_lbls)
+    ax.fill_between(xgrid, ygap_lo, ygap_hi, color='C0', alpha=0.3)
