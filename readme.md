@@ -11,7 +11,7 @@ The below is straight from the gapfit.test() function :)
 ```
 import numpy as np
 from matplotlib import pyplot as plt
-import gapfit
+from gapfit import gap_line, bootstrap_fit_gap, uncertainty_from_boots
 
 # make some fake normally distributed data
 np.random.seed(42)
@@ -69,3 +69,4 @@ xgrid = np.linspace(*xlim, num=300)
 ygap_grid = gap_line(xgrid[None,:], x0, y0boot[:,None], mboot[:,None])
 ygap_lo, ygap_hi = np.percentile(ygap_grid, (16, 84), axis=0)
 ax.fill_between(xgrid, ygap_lo, ygap_hi, color='C0', alpha=0.3)
+```
